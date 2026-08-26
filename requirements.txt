@@ -9,3 +9,4 @@ notebook
 tensorflow
 Pillow
 opencv-python-headless
+kagglehub

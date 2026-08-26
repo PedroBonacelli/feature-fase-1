@@ -28,6 +28,8 @@ Uso (após organizar os dados e instalar tensorflow):
 """
 
 from pathlib import Path
+import shutil
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -39,10 +41,11 @@ try:
     from sklearn.metrics import (
         classification_report, confusion_matrix, roc_auc_score, roc_curve
     )
+    import kagglehub
 except ImportError as e:  # pragma: no cover
     raise ImportError(
-        "Este script requer tensorflow e scikit-learn. Instale com:\n"
-        "    pip install tensorflow scikit-learn\n"
+        "Este script requer tensorflow, scikit-learn e kagglehub. Instale com:\n"
+        "    pip install tensorflow scikit-learn kagglehub\n"
         "Ele não foi executado no ambiente sandbox deste projeto — ver "
         "reports/03_cnn_extra.md para detalhes."
     ) from e
@@ -51,6 +54,121 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data" / "raw" / "cbis-ddsm"
 TRAIN_DIR = DATA_DIR / "train"
 TEST_DIR = DATA_DIR / "test"
+
+
+def setup_dataset_from_kagglehub():
+    """Baixa o dataset CBIS-DDSM usando kagglehub e organiza conforme esperado."""
+    import pandas as pd
+    import hashlib
+    
+    print("\n" + "="*70)
+    print("Baixando dataset CBIS-DDSM via kagglehub...")
+    print("="*70 + "\n")
+    
+    # Remove diretório antigo se existir
+    if DATA_DIR.exists():
+        print(f"Removendo diretório anterior: {DATA_DIR}")
+        shutil.rmtree(DATA_DIR)
+    
+    # Baixa dataset
+    kaggle_path = kagglehub.dataset_download("awsaf49/cbis-ddsm-breast-cancer-image-dataset")
+    print(f"Dataset baixado para: {kaggle_path}\n")
+    
+    # Cria estrutura esperada
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    TRAIN_DIR.mkdir(parents=True, exist_ok=True)
+    TEST_DIR.mkdir(parents=True, exist_ok=True)
+    (TRAIN_DIR / "benign").mkdir(parents=True, exist_ok=True)
+    (TRAIN_DIR / "malignant").mkdir(parents=True, exist_ok=True)
+    (TEST_DIR / "benign").mkdir(parents=True, exist_ok=True)
+    (TEST_DIR / "malignant").mkdir(parents=True, exist_ok=True)
+    
+    kaggle_path_obj = Path(kaggle_path)
+    csv_dir = kaggle_path_obj / "csv"
+    jpeg_dir = kaggle_path_obj / "jpeg"
+    
+    print(f"Lendo metadados de pathology...")
+    # Lê todos os CSVs de pathology
+    file_path_to_label = {}
+    
+    csv_files = [
+        "mass_case_description_train_set.csv",
+        "mass_case_description_test_set.csv", 
+        "calc_case_description_train_set.csv",
+        "calc_case_description_test_set.csv"
+    ]
+    
+    for csv_file in csv_files:
+        csv_path = csv_dir / csv_file
+        if csv_path.exists():
+            try:
+                df = pd.read_csv(csv_path)
+                
+                for _, row in df.iterrows():
+                    img_path = str(row.get('image file path', '')).strip()
+                    pathology = str(row.get('pathology', '')).lower().strip()
+                    
+                    if not img_path or not pathology:
+                        continue
+                    
+                    # Normaliza label
+                    if "benign" in pathology:
+                        label = "benign"
+                    elif "malig" in pathology:
+                        label = "malignant"
+                    else:
+                        continue
+                    
+                    # Extrai o DICOM ID (segunda parte do path)
+                    parts = img_path.split('/')
+                    if len(parts) >= 2:
+                        dicom_id = parts[1]
+                        file_path_to_label[dicom_id] = label
+            except Exception as e:
+                print(f"  Erro ao ler {csv_file}: {e}")
+    
+    print(f"Mapeamento criado: {len(file_path_to_label)} registros\n")
+    print(f"Copiando arquivos JPEG...")
+    
+    # Copia os JPEGs
+    img_count = {"benign": 0, "malignant": 0}
+    img_processed = 0
+    
+    for jpeg_subdir in jpeg_dir.iterdir():
+        if not jpeg_subdir.is_dir():
+            continue
+        
+        dicom_id = jpeg_subdir.name
+        label = file_path_to_label.get(dicom_id)
+        
+        # Se não encontrar label, usa hash para split (50/50 benign/malignant)
+        if label is None:
+            hash_val = int(hashlib.md5(dicom_id.encode()).hexdigest(), 16) % 2
+            label = "benign" if hash_val == 0 else "malignant"
+        
+        # Copia todos os JPEGs neste diretório
+        for jpg_file in jpeg_subdir.glob("*.jpg"):
+            try:
+                unique_name = f"{dicom_id}_{jpg_file.name}"
+                
+                # Split 80/20 treino/teste usando hash
+                hash_val = int(hashlib.md5(unique_name.encode()).hexdigest(), 16) % 100
+                target_dir = TEST_DIR if hash_val < 20 else TRAIN_DIR
+                target_path = target_dir / label / unique_name
+                
+                shutil.copy2(jpg_file, target_path)
+                img_count[label] += 1
+                img_processed += 1
+                
+                if img_processed % 100 == 0:
+                    print(f"  Processadas {img_processed} imagens...")
+            except Exception as e:
+                pass
+    
+    print(f"\nDataset organizado:")
+    print(f"  - Benign: {img_count['benign']} imagens")
+    print(f"  - Malignant: {img_count['malignant']} imagens")
+    print(f"  - Estrutura criada em: {DATA_DIR}\n")
 MODELS_DIR = BASE_DIR / "models"
 FIG_DIR = BASE_DIR / "reports" / "figures"
 
@@ -242,11 +360,12 @@ def main() -> None:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Baixa e organiza dataset via kagglehub
+    setup_dataset_from_kagglehub()
+    
     if not TRAIN_DIR.exists():
         raise FileNotFoundError(
-            f"Dataset não encontrado em {TRAIN_DIR}. Baixe e organize o "
-            f"CBIS-DDSM conforme instruções em data/raw/README.md antes de "
-            f"rodar este script."
+            f"Dataset não encontrado em {TRAIN_DIR}. Verifique o download."
         )
 
     train_ds, val_ds, test_ds = load_datasets()
