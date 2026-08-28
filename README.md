@@ -38,7 +38,9 @@ tech-challenge-fase1/
 │   ├── 01_eda_findings.md     # discussão detalhada da EDA
 │   ├── 02_model_evaluation.md # discussão detalhada da avaliação/explicabilidade
 │   ├── 03_cnn_extra.md        # detalhes da etapa extra de CNN
-│   └── model_comparison.csv   # tabela comparativa dos modelos
+│   ├── model_comparison.csv   # tabela comparativa dos modelos
+│   ├── features_removidas.csv # features descartadas por multicolinearidade e o porquê
+│   └── ablacao_preprocessamento.csv  # efeito medido de cada decisão de pré-processamento
 ├── requirements.txt
 ├── Dockerfile
 └── README.md
@@ -58,9 +60,10 @@ pip install -r requirements.txt
 
 python src/load_data.py       # baixa/gera o dataset em data/raw/
 python src/eda.py             # análise exploratória -> reports/figures/
-python src/preprocessing.py   # limpeza, split treino/teste, scaling -> data/processed/
+python src/preprocessing.py   # limpeza, remoção de features redundantes, split treino/teste, scaling -> data/processed/
 python src/modeling.py        # treina os 3 modelos -> models/
 python src/evaluation.py      # avaliação + explicabilidade -> reports/figures/, reports/model_comparison.csv
+python src/ablation.py        # [opcional] ablação por CV repetida das decisões de pré-processamento
 ```
 
 O script extra de CNN (`src/cnn_mammography.py`) requer TensorFlow e o
@@ -77,9 +80,17 @@ docker run -v $(pwd):/app tech-challenge-fase1 python src/load_data.py
 ## Resultados
 
 Modelo recomendado: **Regressão Logística** — 97,6% de recall e AUC de 0,995
-na classe "maligno" no conjunto de teste (114 amostras). Comparação completa
-dos 3 modelos treinados em `reports/model_comparison.csv` e discussão em
-`reports/RELATORIO_TECNICO.md`.
+na classe "maligno" no conjunto de teste (114 amostras), com apenas 1 falso
+negativo em 42 casos malignos. Comparação completa dos 3 modelos treinados em
+`reports/model_comparison.csv` e discussão em `reports/RELATORIO_TECNICO.md`.
+
+O pré-processamento remove 8 das 30 features por multicolinearidade
+(|correlação| ≥ 0,92, mantendo a mais correlacionada com o alvo — registro em
+`reports/features_removidas.csv`) e os modelos usam `class_weight='balanced'`.
+A seção 6.1 do relatório técnico traz a **ablação por validação cruzada
+repetida** de cada uma dessas decisões: o `class_weight` eleva o recall nos
+três modelos; a redução de features é neutra em desempenho e vale pela
+interpretabilidade.
 
 ## Roteiro do projeto
 

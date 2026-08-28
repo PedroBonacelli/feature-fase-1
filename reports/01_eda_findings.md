@@ -65,8 +65,10 @@ Ver `reports/figures/04_correlation_heatmap.png` e `05_target_correlation.png`.
    casa de centenas/milhares vs. `smoothness` na casa de centésimos), o que é
    importante especialmente para KNN e Regressão Logística.
 2. **Seleção/redundância de features**: dada a alta multicolinearidade entre medidas
-   de tamanho, vale considerar remover algumas features redundantes ou usar
-   técnicas de regularização (ex. Ridge/Lasso) nos modelos lineares.
+   de tamanho, `src/preprocessing.py` remove as features redundantes — de cada par
+   com |correlação| ≥ 0,92, mantém apenas a mais correlacionada com o alvo,
+   reduzindo de 30 para 22 features (detalhamento na seção 4 do
+   `RELATORIO_TECNICO.md` e em `reports/features_removidas.csv`).
 3. **Modelagem**: o bom poder discriminativo de várias features individuais sugere
    que mesmo modelos simples (Regressão Logística, Árvore de Decisão) devem
    performar bem — o que será testado e comparado na etapa de modelagem.

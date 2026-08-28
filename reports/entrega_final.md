@@ -71,13 +71,18 @@ orientou decisões de modelagem.
 
 1. Limpeza defensiva (duplicatas, imputação por mediana, descarte de
    medidas fisicamente inválidas) — 0 registros afetados neste dataset.
-2. Separação treino/teste estratificada (80/20 → 455/114 amostras),
+2. Remoção de features redundantes: de cada par com |correlação| ≥ 0,92,
+   manteve-se apenas a mais correlacionada com o alvo — **8 das 30 features
+   descartadas** (`mean/worst radius`, `mean/worst area`, `mean perimeter`,
+   `perimeter error`, `area error`, `mean concavity`), restando 22.
+   `radius`, `perimeter` e `area` são três leituras do mesmo tamanho do
+   núcleo celular; manter as três instabiliza os coeficientes da Logística e
+   dilui a importância no Random Forest. Registro em
+   `reports/features_removidas.csv`.
+3. Separação treino/teste estratificada (80/20 → 455/114 amostras),
    preservando a proporção de ~37% de malignos.
-3. Escalonamento (`StandardScaler`) ajustado somente no treino, evitando
+4. Escalonamento (`StandardScaler`) ajustado somente no treino, evitando
    vazamento de dados.
-4. Análise de correlação confirmou 15 pares de features com correlação
-   > 0,95 — decisão de manter todas as features, contando com
-   regularização e robustez dos modelos à multicolinearidade.
 
 \newpage
 
@@ -90,6 +95,10 @@ Três técnicas de classificação foram treinadas e comparadas:
 | Regressão Logística | Baseline linear, altamente interpretável |
 | Árvore de Decisão (`max_depth=5`) | Não-linear, fácil de visualizar/explicar |
 | Random Forest (300 árvores) | Ensemble mais robusto, comparação mais forte |
+
+Os três usam `class_weight='balanced'`: 'maligno' é a classe minoritária
+(~37%) e é a que não se pode perder, então o modelo passa a pagar mais caro
+por errá-la, priorizando recall sobre acurácia bruta.
 
 **Métrica de avaliação escolhida:** recall e F1 da classe **maligno**, não
 apenas accuracy — em um dataset com desbalanceamento moderado (63%/37%), um
@@ -105,13 +114,19 @@ Métricas no conjunto de **teste** (114 amostras nunca vistas no treino):
 
 | Modelo | Accuracy | Precision (maligno) | Recall (maligno) | F1 (maligno) | ROC AUC | Falsos negativos |
 |---|---|---|---|---|---|---|
-| **Regressão Logística** | **0,983** | 0,976 | **0,976** | **0,976** | **0,995** | **1** |
-| Árvore de Decisão | 0,921 | 0,867 | 0,929 | 0,897 | 0,916 | 3 |
-| Random Forest | 0,947 | 0,929 | 0,929 | 0,929 | 0,994 | 3 |
+| **Regressão Logística** | 0,965 | 0,932 | **0,976** | **0,954** | 0,995 | **1** |
+| Árvore de Decisão | 0,939 | 0,907 | 0,929 | 0,918 | 0,929 | 3 |
+| Random Forest | 0,956 | **0,951** | 0,929 | 0,940 | **0,995** | 3 |
+
+Validação cruzada repetida (10 folds × 3 repetições) confirma que
+`class_weight='balanced'` eleva o recall nos três modelos, enquanto a
+remoção das 8 features é neutra em desempenho (melhora a Árvore de Decisão;
+para os demais a variação fica dentro do desvio entre folds) — seu ganho é
+de interpretabilidade. Detalhamento na seção 6.1 do `RELATORIO_TECNICO.md`.
 
 A **Regressão Logística** obteve o melhor resultado — maior recall e F1 na
-classe maligno, maior AUC, e apenas 1 falso negativo. O Random Forest teve
-100% de acurácia no treino mas ficou atrás no teste, indício de leve
+classe maligno, e apenas 1 falso negativo. O Random Forest teve
+100% de acurácia no treino mas ficou atrás no recall, indício de leve
 overfitting.
 
 ![Matrizes de confusão dos três modelos no conjunto de teste](figures/06_confusion_matrices.png){width=100%}

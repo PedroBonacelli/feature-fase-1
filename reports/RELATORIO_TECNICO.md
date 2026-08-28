@@ -55,18 +55,39 @@ substituindo) a decisão médica.
    (negativas). Neste dataset, 0 registros foram afetados — mas o pipeline
    fica preparado para dados futuros mais "sujos" vindos do mesmo processo
    de coleta.
-2. **Separação treino/teste estratificada** (80/20 → 455/114 amostras),
+2. **Remoção de features redundantes (multicolinearidade)**: de cada par com
+   |correlação| ≥ 0,92, mantém-se apenas a feature mais correlacionada com o
+   alvo. O processo é guloso e iterativo (elimina o par mais correlacionado,
+   recalcula, repete) e removeu **8 das 30 features**, deixando 22:
+
+   | Removida | Redundante com | Corr. entre elas | Corr. com alvo (removida → mantida) |
+   |---|---|---|---|
+   | `mean radius` | `mean perimeter` | +0,998 | 0,730 → 0,743 |
+   | `worst radius` | `worst perimeter` | +0,994 | 0,776 → 0,783 |
+   | `mean area` | `mean perimeter` | +0,987 | 0,709 → 0,743 |
+   | `worst area` | `worst perimeter` | +0,978 | 0,734 → 0,783 |
+   | `perimeter error` | `radius error` | +0,973 | 0,556 → 0,567 |
+   | `mean perimeter` | `worst perimeter` | +0,970 | 0,743 → 0,783 |
+   | `area error` | `radius error` | +0,952 | 0,548 → 0,567 |
+   | `mean concavity` | `mean concave points` | +0,921 | 0,696 → 0,777 |
+
+   O registro completo fica em `reports/features_removidas.csv`.
+   **Justificativa** — duas features quase idênticas não acrescentam sinal,
+   mas custam: na Regressão Logística o efeito se divide arbitrariamente
+   entre as colunas correlacionadas, instabilizando os coeficientes usados na
+   explicabilidade; no Random Forest a importância de uma variável relevante
+   se dilui entre suas cópias, rebaixando-a no ranking. Note que
+   `radius`/`perimeter`/`area` são, na prática, três leituras do mesmo
+   tamanho do núcleo celular — a redundância é geométrica, não estatística.
+   **Efeito medido nas métricas** (ver seção 6.1): neutro. O ganho é de
+   interpretabilidade e parcimônia, não de desempenho preditivo.
+3. **Separação treino/teste estratificada** (80/20 → 455/114 amostras),
    preservando a proporção de ~37% de malignos em ambos os conjuntos.
-3. **Escalonamento (StandardScaler)** ajustado **somente no conjunto de
+4. **Escalonamento (StandardScaler)** ajustado **somente no conjunto de
    treino** (para evitar vazamento de dados) — necessário pois as features
    têm escalas muito diferentes (ex.: `area` na casa de centenas/milhares
    vs. `smoothness` na casa de centésimos), o que afeta diretamente modelos
    sensíveis a escala como Regressão Logística e KNN.
-4. **Análise de correlação**: confirmou 15 pares de features com
-   correlação > 0,95. Decisão tomada: **manter todas as features**, em vez
-   de removê-las às cegas, e deixar a regularização (Regressão Logística) e
-   a robustez natural a multicolinearidade dos modelos baseados em árvore
-   lidarem com a redundância.
 5. Como todas as variáveis já são numéricas (não há variáveis categóricas
    no dataset original, além do alvo), não foi necessário one-hot
    encoding — o `diagnosis` (rótulo textual redundante com `target`) foi
@@ -84,6 +105,11 @@ exigido):
 | **Regressão Logística** | Baseline linear, altamente interpretável (coeficientes indicam direção/força de cada feature) — importante em contexto clínico. |
 | **Árvore de Decisão** (`max_depth=5`) | Captura relações não-lineares, fácil de visualizar e explicar a profissionais não-técnicos. |
 | **Random Forest** (300 árvores, `max_depth=8`) | Ensemble mais robusto, usado como baseline de comparação mais forte. |
+
+Os três usam **`class_weight='balanced'`**: 'maligno' é a classe minoritária
+(~37%) e é justamente a que não se pode perder. O parâmetro faz o modelo
+pagar mais caro por errar essa classe, priorizando recall em vez de acurácia
+bruta — alinhado com a métrica de avaliação escolhida abaixo.
 
 ### Escolha da métrica de avaliação
 
@@ -103,15 +129,49 @@ Métricas no conjunto de **teste** (114 amostras nunca vistas no treino):
 
 | Modelo | Accuracy | Precision (maligno) | Recall (maligno) | F1 (maligno) | ROC AUC | Falsos negativos |
 |---|---|---|---|---|---|---|
-| **Regressão Logística** | **0,983** | 0,976 | **0,976** | **0,976** | **0,995** | **1** |
-| Árvore de Decisão | 0,921 | 0,867 | 0,929 | 0,897 | 0,916 | 3 |
-| Random Forest | 0,947 | 0,929 | 0,929 | 0,929 | 0,994 | 3 |
+| **Regressão Logística** | 0,965 | 0,932 | **0,976** | **0,954** | 0,995 | **1** |
+| Árvore de Decisão | 0,939 | 0,907 | 0,929 | 0,918 | 0,929 | 3 |
+| Random Forest | 0,956 | **0,951** | 0,929 | 0,940 | **0,995** | 3 |
 
 **A Regressão Logística obteve o melhor resultado** — maior recall e F1 na
-classe maligno, maior AUC, e apenas 1 falso negativo em 42 casos malignos no
-teste. Notavelmente, o Random Forest teve 100% de acurácia no treino mas
-ficou atrás da Regressão Logística no teste — indício de leve overfitting
-que a Logística, por ser mais simples e regularizada, evitou melhor.
+classe maligno, e apenas 1 falso negativo em 42 casos malignos no teste.
+Notavelmente, o Random Forest teve 100% de acurácia no treino mas ficou
+atrás no recall — indício de leve overfitting que a Logística, por ser mais
+simples e regularizada, evitou melhor.
+
+### 6.1. Ablação: o que cada decisão de pré-processamento realmente entregou
+
+Com apenas 114 amostras de teste, uma diferença de 2 ou 3 acertos move as
+métricas em ~2 pontos percentuais. Para separar efeito real de ruído do
+sorteio, as duas decisões (remoção de features e `class_weight`) foram
+medidas por **validação cruzada estratificada repetida** (10 folds × 3
+repetições = 30 medições por configuração) sobre o dataset completo.
+
+Recall médio da classe maligno (desvio entre folds entre parênteses):
+
+| Modelo | 30 feat., sem peso | 30 feat., balanced | 22 feat., sem peso | 22 feat., balanced |
+|---|---|---|---|---|
+| Regressão Logística | 0,961 (0,039) | **0,967** (0,033) | 0,946 (0,050) | 0,964 (0,038) |
+| Árvore de Decisão | 0,890 (0,072) | 0,905 (0,073) | 0,901 (0,069) | **0,918** (0,074) |
+| Random Forest | 0,937 (0,065) | **0,954** (0,050) | 0,928 (0,053) | 0,943 (0,052) |
+
+Leitura honesta dos números:
+
+- **`class_weight='balanced'` funciona.** Ganho consistente de recall nos três
+  modelos (+0,6 a +1,7 pp), em qualquer conjunto de features, ao custo de
+  alguma precisão. É exatamente o trade-off desejado quando o falso negativo
+  é o erro caro.
+- **A remoção de features é neutra em desempenho.** Melhora a Árvore de
+  Decisão (recall 0,905 → 0,918; F1 0,906 → 0,922), o modelo mais sensível a
+  ruído por escolher um único split por nó. Para Logística e Random Forest as
+  médias caem ligeiramente, mas **muito dentro do desvio entre folds** (~0,04
+  a 0,05) — ou seja, indistinguível de ruído, não uma piora demonstrável.
+
+Portanto a remoção das 8 features **não é justificada como ganho de
+acurácia**, e sim por parcimônia e interpretabilidade: 22 features em vez de
+30, coeficientes estáveis na Logística e ranking de importância que não
+dilui o mesmo sinal entre cópias — o que importa quando o modelo precisa ser
+explicado a um profissional de saúde.
 
 ### Explicabilidade
 

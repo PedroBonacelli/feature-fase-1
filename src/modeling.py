@@ -39,26 +39,39 @@ def load_processed():
 
 
 def train_models(X_train, X_train_scaled, y_train):
+    """Treina os três classificadores.
+
+    `class_weight='balanced'` em todos: 'maligno' (target=0) é a classe
+    minoritária (~37% do dataset) e é justamente a que o modelo não pode
+    perder — um falso negativo manda para casa uma paciente com câncer. O
+    parâmetro faz o modelo pagar mais caro por errar essa classe, priorizando
+    recall em vez de acurácia bruta.
+    """
     models = {}
 
     # 1) Regressão Logística — modelo linear, interpretável, serve de baseline
     #    clínico (coeficientes indicam direção/força do efeito de cada feature).
     #    Usa dados escalonados: essencial para regularização/convergência.
-    log_reg = LogisticRegression(max_iter=5000, random_state=RANDOM_STATE)
+    log_reg = LogisticRegression(
+        max_iter=5000, class_weight="balanced", random_state=RANDOM_STATE
+    )
     log_reg.fit(X_train_scaled, y_train)
     models["logistic_regression"] = (log_reg, "scaled")
 
     # 2) Árvore de Decisão — não-linear, captura interações entre features,
     #    fácil de visualizar/explicar para profissionais não-técnicos.
     #    Profundidade limitada para reduzir overfitting.
-    tree = DecisionTreeClassifier(max_depth=5, random_state=RANDOM_STATE)
+    tree = DecisionTreeClassifier(
+        max_depth=5, class_weight="balanced", random_state=RANDOM_STATE
+    )
     tree.fit(X_train, y_train)
     models["decision_tree"] = (tree, "raw")
 
     # 3) Random Forest — ensemble de árvores, geralmente mais robusto e com
     #    melhor generalização; usado como baseline mais forte de comparação.
     forest = RandomForestClassifier(
-        n_estimators=300, max_depth=8, random_state=RANDOM_STATE, n_jobs=-1
+        n_estimators=300, max_depth=8, class_weight="balanced",
+        random_state=RANDOM_STATE, n_jobs=-1,
     )
     forest.fit(X_train, y_train)
     models["random_forest"] = (forest, "raw")
