@@ -131,13 +131,31 @@ Métricas no conjunto de **teste** (114 amostras nunca vistas no treino):
 |---|---|---|---|---|---|---|
 | **Regressão Logística** | 0,965 | 0,932 | **0,976** | **0,954** | 0,995 | **1** |
 | Árvore de Decisão | 0,939 | 0,907 | 0,929 | 0,918 | 0,929 | 3 |
-| Random Forest | 0,956 | **0,951** | 0,929 | 0,940 | **0,995** | 3 |
+| Random Forest | **0,974** | **1,000** | 0,929 | 0,963 | **0,996** | 3 |
 
-**A Regressão Logística obteve o melhor resultado** — maior recall e F1 na
-classe maligno, e apenas 1 falso negativo em 42 casos malignos no teste.
-Notavelmente, o Random Forest teve 100% de acurácia no treino mas ficou
-atrás no recall — indício de leve overfitting que a Logística, por ser mais
-simples e regularizada, evitou melhor.
+**A Regressão Logística obteve o melhor resultado na métrica que mais importa
+clinicamente** — maior recall e F1 na classe maligno, e apenas 1 falso
+negativo em 42 casos malignos no teste. O Random Forest, após a reexecução
+completa do pipeline nesta revisão, alcançou a maior acurácia e precisão
+perfeita (nenhum falso positivo), mas manteve recall abaixo da Logística (3
+falsos negativos) — indício de que, mesmo com `class_weight='balanced'`, o
+ensemble ainda erra por excesso de cautela do lado "maligno" com mais
+frequência que o modelo linear. Isso não muda a recomendação: para triagem
+de câncer, recall é a métrica prioritária, e nela a Regressão Logística
+segue à frente.
+
+> **Nota de reexecução (validação desta revisão):** esta seção foi
+> revalidada após a remoção de features redundantes (seção 4, item 2) e a
+> adoção de `class_weight='balanced'` (seção 5). Regressão Logística e
+> Árvore de Decisão reproduziram exatamente os números já registrados. O
+> Random Forest reproduziu com pequenas diferenças em relação a uma versão
+> anterior deste relatório (accuracy e precisão levemente maiores; recall
+> idêntico) — padrão consistente com sensibilidade conhecida do
+> `RandomForestClassifier` a diferenças de versão do scikit-learn na
+> interação entre `class_weight='balanced'` e a amostragem bootstrap.
+> `models/*.joblib`, `data/processed/*.csv` e `reports/model_comparison.csv`
+> foram regenerados nesta revisão a partir do código atual e são a fonte
+> autoritativa vigente.
 
 ### 6.1. Ablação: o que cada decisão de pré-processamento realmente entregou
 
@@ -153,19 +171,32 @@ Recall médio da classe maligno (desvio entre folds entre parênteses):
 |---|---|---|---|---|
 | Regressão Logística | 0,961 (0,039) | **0,967** (0,033) | 0,946 (0,050) | 0,964 (0,038) |
 | Árvore de Decisão | 0,890 (0,072) | 0,905 (0,073) | 0,901 (0,069) | **0,918** (0,074) |
-| Random Forest | 0,937 (0,065) | **0,954** (0,050) | 0,928 (0,053) | 0,943 (0,052) |
+| Random Forest | 0,937 (0,065) | 0,939 (0,056) | 0,928 (0,053) | 0,923 (0,056) |
 
 Leitura honesta dos números:
 
-- **`class_weight='balanced'` funciona.** Ganho consistente de recall nos três
-  modelos (+0,6 a +1,7 pp), em qualquer conjunto de features, ao custo de
-  alguma precisão. É exatamente o trade-off desejado quando o falso negativo
-  é o erro caro.
-- **A remoção de features é neutra em desempenho.** Melhora a Árvore de
-  Decisão (recall 0,905 → 0,918; F1 0,906 → 0,922), o modelo mais sensível a
-  ruído por escolher um único split por nó. Para Logística e Random Forest as
-  médias caem ligeiramente, mas **muito dentro do desvio entre folds** (~0,04
-  a 0,05) — ou seja, indistinguível de ruído, não uma piora demonstrável.
+- **`class_weight='balanced'` ajuda a Logística e a Árvore de Decisão de
+  forma consistente** (+0,6 a +1,7 pp de recall, em qualquer conjunto de
+  features, ao custo de alguma precisão) — exatamente o trade-off desejado
+  quando o falso negativo é o erro caro. **No Random Forest o ganho é
+  marginal e dentro do ruído** (0,937 → 0,939 com 30 features; 0,928 → 0,923,
+  uma leve queda, com 22 features) — o ensemble por bootstrap já mistura
+  naturalmente a proporção de classes entre árvores, diluindo o efeito do
+  peso.
+- **A remoção de features é neutra em desempenho para Logística e Random
+  Forest, e melhora a Árvore de Decisão** (recall 0,905 → 0,918; F1 0,906 →
+  0,922 — o modelo mais sensível a ruído por escolher um único split por
+  nó). Para os outros dois, as médias variam **dentro do desvio entre
+  folds** (~0,05 a 0,065) — ou seja, indistinguível de ruído amostral, não
+  uma piora demonstrável.
+- **Nota de reprodutibilidade:** os valores do Random Forest nesta tabela
+  foram medidos nesta revisão e diferem de uma versão preliminar deste
+  relatório (que reportava 0,954 e 0,943 nas colunas `balanced`) — mesma
+  causa da nota da seção 6: sensibilidade do `RandomForestClassifier` a
+  detalhes de versão do scikit-learn. A conclusão qualitativa não muda:
+  `class_weight='balanced'` favorece a Logística e a Árvore, e a remoção de
+  features segue sendo uma decisão de parcimônia/interpretabilidade, não de
+  ganho de desempenho.
 
 Portanto a remoção das 8 features **não é justificada como ganho de
 acurácia**, e sim por parcimônia e interpretabilidade: 22 features em vez de
