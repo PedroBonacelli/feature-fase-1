@@ -1,32 +1,23 @@
-"""
-Ablação das decisões de pré-processamento — Breast Cancer Wisconsin
-
-MOTIVAÇÃO
----------
-O conjunto de teste tem 114 amostras: 2 ou 3 acertos a mais movem as métricas
-em ~2 pontos percentuais. Julgar uma decisão de pré-processamento por um único
-split é, portanto, julgar em cima de ruído.
-
-Este script mede o efeito isolado das duas decisões tomadas em
-`src/preprocessing.py` e `src/modeling.py`:
-
-    1. remover as 8 features redundantes (30 -> 22 features);
-    2. usar class_weight='balanced' nos classificadores.
-
-As 4 combinações são avaliadas com validação cruzada estratificada REPETIDA
-(10 folds x 3 repetições = 30 medições por configuração), reportando média e
-desvio entre folds. O desvio é a informação decisiva: uma diferença de médias
-menor que ele não é distinguível do sorteio das amostras.
-
-O escalonamento entra como primeira etapa de um Pipeline, e não aplicado uma
-vez sobre todo o X: dentro do Pipeline o scaler é reajustado a cada fold,
-usando apenas os dados de treino daquele fold. Ajustá-lo antes faria o fold de
-validação influenciar a média/desvio da transformação — vazamento que infla a
-métrica.
-
-Uso:
-    python src/ablation.py
-"""
+# Decisões de pré-processamento — Breast Cancer Wisconsin
+#
+# O teste tem só 114 amostras: 2 ou 3 acertos a mais já mexem ~2 pontos
+# percentuais nas métricas. Então julgar uma decisão de pré-processamento
+# com um único split é basicamente julgar em cima de ruído.
+#
+# Aqui meço o efeito isolado das duas decisões do preprocessing.py/modeling.py:
+#   1. tirar as 8 features redundantes (30 -> 22)
+#   2. usar class_weight='balanced'
+#
+# As 4 combinações passam por validação cruzada estratificada repetida
+# (10 folds x 3 repetições = 30 medições cada), com média e desvio entre
+# folds. O desvio importa: diferença de média menor que ele não quer dizer
+# nada, é só sorteio de amostra.
+#
+# O scaler entra dentro do Pipeline (não é ajustado uma vez fora) porque
+# assim ele é refeito em cada fold só com o treino daquele fold — se
+# ajustasse antes, o fold de validação vazaria informação pra métrica.
+#
+# python src/ablation.py
 
 from pathlib import Path
 
@@ -47,10 +38,10 @@ REPORTS_DIR = BASE_DIR / "reports"
 RANDOM_STATE = 42
 N_SPLITS = 10
 N_REPEATS = 3
-POS_LABEL = 0  # 'maligno' — a classe de interesse clínico
+POS_LABEL = 0  # maligno
 
-# maligno é a classe 0, e não a 1 (padrão do sklearn), então precision/recall/f1
-# precisam de pos_label explícito.
+# maligno é a classe 0 (não a 1, que é o default do sklearn), por isso
+# precision/recall/f1 precisam de pos_label explícito
 SCORING = {
     "recall_mal": make_scorer(recall_score, pos_label=POS_LABEL),
     "precision_mal": make_scorer(precision_score, pos_label=POS_LABEL),
@@ -72,8 +63,7 @@ def montar_modelos(class_weight):
 
 
 def avaliar(X, y, nome_features: str) -> list[dict]:
-    # cv criado uma vez e reutilizado: todas as configurações veem exatamente
-    # os mesmos folds, o que torna a comparação pareada válida.
+    # mesmo cv reutilizado em todas as configs, pra comparação ser pareada
     cv = RepeatedStratifiedKFold(
         n_splits=N_SPLITS, n_repeats=N_REPEATS, random_state=RANDOM_STATE
     )
@@ -101,7 +91,7 @@ def main() -> None:
     df_reduzido, _ = drop_redundant_features(df)
     X_reduzido, _ = build_features_target(df_reduzido)
 
-    print(f"\nProtocolo: {N_SPLITS} folds x {N_REPEATS} repetições = "
+    print(f"\n{N_SPLITS} folds x {N_REPEATS} repetições = "
           f"{N_SPLITS * N_REPEATS} medições por configuração\n")
 
     resultados = pd.DataFrame(
@@ -111,15 +101,15 @@ def main() -> None:
 
     pd.set_option("display.width", 200)
     for modelo in resultados["modelo"].unique():
-        print(f"=== {modelo} ===")
+        print(f"--- {modelo} ---")
         print(resultados[resultados["modelo"] == modelo]
               .drop(columns="modelo").to_string(index=False))
         print()
 
     destino = REPORTS_DIR / "ablacao_preprocessamento.csv"
     resultados.to_csv(destino, index=False)
-    print(f"Tabela salva em: {destino}")
-    print("Leitura dos resultados: seção 6.1 do reports/RELATORIO_TECNICO.md")
+    print(f"tabela salva em: {destino}")
+    print("leitura completa: seção 6.1 do reports/RELATORIO_TECNICO.md")
 
 
 if __name__ == "__main__":

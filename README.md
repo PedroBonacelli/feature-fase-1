@@ -1,46 +1,44 @@
 # Tech Challenge – Fase 1: IA para Saúde e Segurança da Mulher
 
-Projeto desenvolvido para o Tech Challenge da Fase 1 (IADT). Constrói a base de um
-sistema de suporte ao diagnóstico e detecção de riscos para a saúde da mulher, usando
+Projeto pro Tech Challenge da Fase 1 (IADT). Constrói a base de um sistema
+de suporte ao diagnóstico e detecção de riscos pra saúde da mulher, usando
 Machine Learning sobre dados médicos estruturados e, na etapa extra, Visão
 Computacional (CNN) sobre imagens de mamografia.
 
-## Desafio
+## O desafio
 
-Uma rede de hospitais quer identificar precocemente condições que afetam a segurança
-e a saúde feminina (ex.: câncer de mama). Esta fase constrói a base de IA/ML que
-processa dados médicos para apoiar (nunca substituir) a decisão do profissional de
-saúde.
+Uma rede de hospitais quer identificar mais cedo condições que afetam a
+segurança e a saúde feminina (câncer de mama, por exemplo). Esta fase
+constrói a base de IA/ML que processa dados médicos pra apoiar — nunca
+substituir — a decisão do profissional de saúde.
 
-## Datasets utilizados
+## Datasets
 
-- **Breast Cancer Wisconsin (Diagnostic)** — dados estruturados de exames para
-  classificação de tumores em malignos/benignos.
+- **Breast Cancer Wisconsin (Diagnostic)** — dados estruturados de exames
+  pra classificar tumores em malignos/benignos.
   Fonte: https://www.kaggle.com/datasets/uciml/breast-cancer-wisconsin-data
-- **[EXTRA] CBIS-DDSM** — imagens de mamografia para diagnóstico via CNN.
+- **[EXTRA] CBIS-DDSM** — imagens de mamografia pra diagnóstico via CNN.
   Fonte: https://www.kaggle.com/datasets/awsaf49/cbis-ddsm-breast-cancer-image-dataset
 
-Os datasets não são versionados no repositório (ver `.gitignore`); instruções de
-download estão em `data/raw/README.md`.
+Os datasets não são versionados (ver `.gitignore`); instruções de download
+em `data/raw/README.md`.
 
-## Estrutura do projeto
+## Estrutura
 
 ```
 tech-challenge-fase1/
 ├── data/
 │   ├── raw/            # dados brutos (não versionados; ver data/raw/README.md)
-│   └── processed/      # dados após pré-processamento (gerados por src/preprocessing.py)
-├── src/                 # scripts Python do pipeline (ver "Como executar")
-├── models/               # modelos treinados salvos (.joblib)
+│   └── processed/      # gerados por src/preprocessing.py
+├── src/                # scripts do pipeline (ver "Como executar")
+├── models/             # modelos treinados (.joblib)
 ├── reports/
-│   ├── figures/          # gráficos gerados por cada etapa
-│   ├── RELATORIO_TECNICO.md   # relatório técnico consolidado (leia primeiro)
-│   ├── 01_eda_findings.md     # discussão detalhada da EDA
-│   ├── 02_model_evaluation.md # discussão detalhada da avaliação/explicabilidade
-│   ├── 03_cnn_extra.md        # detalhes da etapa extra de CNN
-│   ├── model_comparison.csv   # tabela comparativa dos modelos
-│   ├── features_removidas.csv # features descartadas por multicolinearidade e o porquê
-│   └── ablacao_preprocessamento.csv  # efeito medido de cada decisão de pré-processamento
+│   ├── figures/
+│   ├── RELATORIO_TECNICO.md   # leia primeiro
+│   ├── 01_eda_findings.md
+│   ├── 02_model_evaluation.md
+│   ├── 03_cnn_extra.md
+│   └── model_comparison.csv
 ├── requirements.txt
 ├── Dockerfile
 └── README.md
@@ -48,10 +46,10 @@ tech-challenge-fase1/
 
 ## Como executar
 
-Este projeto usa **scripts Python** (não notebooks) — cada um roda uma etapa
-do pipeline e imprime/salva os resultados em `reports/`. Rode-os na ordem:
+São scripts Python (não notebooks) — cada um roda uma etapa e salva o
+resultado em `reports/`. Rode nesta ordem:
 
-### Opção 1: ambiente local (venv)
+### venv local
 
 ```bash
 python3 -m venv .venv
@@ -59,49 +57,39 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 python src/load_data.py       # baixa/gera o dataset em data/raw/
-python src/eda.py             # análise exploratória -> reports/figures/
-python src/preprocessing.py   # limpeza, remoção de features redundantes, split treino/teste, scaling -> data/processed/
+python src/eda.py             # EDA -> reports/figures/
+python src/preprocessing.py   # limpeza, split, scaling -> data/processed/
 python src/modeling.py        # treina os 3 modelos -> models/
-python src/evaluation.py      # avaliação + explicabilidade -> reports/figures/, reports/model_comparison.csv
-python src/ablation.py        # [opcional] ablação por CV repetida das decisões de pré-processamento
+python src/evaluation.py      # avaliação + explicabilidade
 ```
 
-O script extra de CNN (`src/cnn_mammography.py`) requer TensorFlow e o
-dataset CBIS-DDSM baixado à parte — ver `reports/03_cnn_extra.md`.
+O script extra de CNN (`src/cnn_mammography.py`) precisa de TensorFlow e do
+CBIS-DDSM baixado à parte — ver `reports/03_cnn_extra.md`.
 
-### Opção 2: Docker
+### Docker
 
 ```bash
 docker build -t tech-challenge-fase1 .
 docker run -v $(pwd):/app tech-challenge-fase1 python src/load_data.py
-# (repita para os demais scripts, na mesma ordem acima)
+# repete pros demais scripts, na mesma ordem
 ```
 
 ## Resultados
 
-Modelo recomendado: **Regressão Logística** — 97,6% de recall e AUC de 0,995
-na classe "maligno" no conjunto de teste (114 amostras), com apenas 1 falso
-negativo em 42 casos malignos. Comparação completa dos 3 modelos treinados em
-`reports/model_comparison.csv` e discussão em `reports/RELATORIO_TECNICO.md`.
+Modelo recomendado: **Regressão Logística** — 97,6% de recall e AUC de
+0,995 na classe maligno, no teste (114 amostras). Comparação completa em
+`reports/model_comparison.csv`, discussão em `reports/RELATORIO_TECNICO.md`.
 
-O pré-processamento remove 8 das 30 features por multicolinearidade
-(|correlação| ≥ 0,92, mantendo a mais correlacionada com o alvo — registro em
-`reports/features_removidas.csv`) e os modelos usam `class_weight='balanced'`.
-A seção 6.1 do relatório técnico traz a **ablação por validação cruzada
-repetida** de cada uma dessas decisões: o `class_weight` eleva o recall nos
-três modelos; a redução de features é neutra em desempenho e vale pela
-interpretabilidade.
+## Roteiro
 
-## Roteiro do projeto
-
-1. Análise exploratória dos dados (EDA) — ✅ `src/eda.py`
-2. Pré-processamento e pipeline — ✅ `src/preprocessing.py`
-3. Modelagem (3 algoritmos de classificação) — ✅ `src/modeling.py`
-4. Avaliação e explicabilidade (feature importance, permutation importance, SHAP) — ✅ `src/evaluation.py`
-5. [Extra] CNN para diagnóstico via imagem (mamografias) — código pronto, não executado (ver `reports/03_cnn_extra.md`)
-6. Relatório técnico com discussão crítica dos resultados — ✅ `reports/RELATORIO_TECNICO.md`
+1. EDA — `src/eda.py`
+2. Pré-processamento — `src/preprocessing.py`
+3. Modelagem (3 algoritmos) — `src/modeling.py`
+4. Avaliação e explicabilidade — `src/evaluation.py`
+5. [Extra] CNN pra diagnóstico via imagem — código pronto, não executado (`reports/03_cnn_extra.md`)
+6. Relatório técnico com discussão crítica — `reports/RELATORIO_TECNICO.md`
 
 ## Aviso
 
-Este sistema é uma prova de conceito de apoio à decisão. O diagnóstico final é
+Isso é uma prova de conceito de apoio à decisão. O diagnóstico final é
 sempre responsabilidade do profissional de saúde.

@@ -1,17 +1,13 @@
-"""
-Modelagem — Breast Cancer Wisconsin (Diagnostic)
-
-Treina três técnicas de classificação (mais que o mínimo de duas exigido):
-    1. Regressão Logística  (usa features escalonadas)
-    2. Árvore de Decisão    (usa features não-escalonadas — invariante à escala)
-    3. Random Forest        (usa features não-escalonadas — baseline mais forte)
-
-O conjunto de treino/teste já foi separado em src/preprocessing.py — este
-script apenas carrega os artefatos gerados por ele.
-
-Uso:
-    python src/modeling.py
-"""
+# Modelagem — Breast Cancer Wisconsin (Diagnostic)
+#
+# Treina 3 classificadores (o mínimo pedido era 2):
+#   - Regressão Logística (features escalonadas)
+#   - Árvore de Decisão   (features cruas, invariante à escala)
+#   - Random Forest       (features cruas)
+#
+# Assume que src/preprocessing.py já rodou e gerou os CSVs em data/processed/.
+#
+# python src/modeling.py
 
 from pathlib import Path
 
@@ -39,36 +35,23 @@ def load_processed():
 
 
 def train_models(X_train, X_train_scaled, y_train):
-    """Treina os três classificadores.
-
-    `class_weight='balanced'` em todos: 'maligno' (target=0) é a classe
-    minoritária (~37% do dataset) e é justamente a que o modelo não pode
-    perder — um falso negativo manda para casa uma paciente com câncer. O
-    parâmetro faz o modelo pagar mais caro por errar essa classe, priorizando
-    recall em vez de acurácia bruta.
-    """
+    # class_weight='balanced' nos três: maligno é a classe minoritária (~37%)
+    # e é a que não pode passar batido, então o modelo paga mais caro por
+    # errar ela — prioriza recall em vez de acurácia bruta.
     models = {}
 
-    # 1) Regressão Logística — modelo linear, interpretável, serve de baseline
-    #    clínico (coeficientes indicam direção/força do efeito de cada feature).
-    #    Usa dados escalonados: essencial para regularização/convergência.
     log_reg = LogisticRegression(
         max_iter=5000, class_weight="balanced", random_state=RANDOM_STATE
     )
     log_reg.fit(X_train_scaled, y_train)
     models["logistic_regression"] = (log_reg, "scaled")
 
-    # 2) Árvore de Decisão — não-linear, captura interações entre features,
-    #    fácil de visualizar/explicar para profissionais não-técnicos.
-    #    Profundidade limitada para reduzir overfitting.
     tree = DecisionTreeClassifier(
         max_depth=5, class_weight="balanced", random_state=RANDOM_STATE
     )
     tree.fit(X_train, y_train)
     models["decision_tree"] = (tree, "raw")
 
-    # 3) Random Forest — ensemble de árvores, geralmente mais robusto e com
-    #    melhor generalização; usado como baseline mais forte de comparação.
     forest = RandomForestClassifier(
         n_estimators=300, max_depth=8, class_weight="balanced",
         random_state=RANDOM_STATE, n_jobs=-1,
@@ -89,11 +72,10 @@ def main() -> None:
         joblib.dump(model, MODELS_DIR / f"{name}.joblib")
         X_eval = X_train_scaled if feature_type == "scaled" else X_train
         train_acc = model.score(X_eval, y_train)
-        print(f"{name:22s} | tipo de features: {feature_type:7s} | "
-              f"acurácia (treino): {train_acc:.4f}")
+        print(f"{name:22s} | features: {feature_type:7s} | acc treino: {train_acc:.4f}")
 
-    print(f"\nModelos treinados e salvos em: {MODELS_DIR}")
-    print("Avaliação detalhada no conjunto de TESTE: ver src/evaluation.py")
+    print(f"\nmodelos salvos em: {MODELS_DIR}")
+    print("avaliação no teste: src/evaluation.py")
 
 
 if __name__ == "__main__":

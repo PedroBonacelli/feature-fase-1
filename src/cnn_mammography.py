@@ -1,30 +1,16 @@
 """
-[EXTRA] Visão computacional — CNN para diagnóstico via mamografia (CBIS-DDSM)
+[EXTRA] CNN pra diagnóstico via mamografia (CBIS-DDSM)
 
-IMPORTANTE — leia antes de rodar:
-    Este script requer TensorFlow/Keras e o dataset CBIS-DDSM baixado
-    localmente. Ele foi desenvolvido e revisado para ser executado em um
-    ambiente com GPU (Google Colab ou máquina local) — NÃO foi executado no
-    ambiente sandbox usado para o restante deste projeto, pois esse ambiente
-    não tem acesso à internet para baixar o dataset do Kaggle nem permite
-    instalar TensorFlow (índice de pacotes restrito). Por isso não há,
-    nesta entrega, gráficos/métricas reais desta etapa — apenas o código,
-    pronto para rodar. Ver `reports/03_cnn_extra.md` para mais detalhes
-    sobre essa limitação e como executar.
+Precisa de TensorFlow/Keras e do dataset já organizado (ver
+src/cnn_data_prep.py e data/raw/README.md). Escrito pra rodar num ambiente
+com GPU — não roda no sandbox usado no resto do projeto porque lá não dá
+pra baixar o dataset nem instalar tensorflow. Detalhes em
+reports/03_cnn_extra.md.
 
-Estrutura de dados esperada (ver instruções de download/organização em
-data/raw/README.md):
+Espera essa estrutura:
+    data/raw/cbis-ddsm/{train,test}/{benign,malignant}/*.png
 
-    data/raw/cbis-ddsm/
-        train/
-            benign/     *.png
-            malignant/  *.png
-        test/
-            benign/     *.png
-            malignant/  *.png
-
-Uso (após organizar os dados e instalar tensorflow):
-    python src/cnn_mammography.py
+python src/cnn_mammography.py
 """
 
 from pathlib import Path

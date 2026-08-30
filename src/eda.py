@@ -1,13 +1,7 @@
-"""
-Análise Exploratória de Dados (EDA) — Breast Cancer Wisconsin (Diagnostic)
-
-Carrega o dataset, gera estatísticas descritivas, visualizações de
-distribuições e a matriz de correlação, salvando tudo em reports/figures/
-para uso no relatório técnico.
-
-Uso:
-    python src/eda.py
-"""
+# EDA do Breast Cancer Wisconsin — estatísticas, distribuições e correlação.
+# Gera as figuras 01-05 usadas no relatório (reports/figures/).
+#
+# python src/eda.py
 
 from pathlib import Path
 
@@ -16,7 +10,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
-matplotlib.use("Agg")  # ambiente sem display
+matplotlib.use("Agg")  # sem display aqui, só salvando arquivo
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_PATH = BASE_DIR / "data" / "raw" / "breast_cancer_wisconsin.csv"
@@ -24,7 +18,7 @@ FIG_DIR = BASE_DIR / "reports" / "figures"
 
 sns.set_theme(style="whitegrid")
 
-# Features "mean" mais interpretáveis para inspeção visual detalhada
+# essas 8 são as "mean" mais fáceis de olhar e já dão uma boa ideia geral
 KEY_FEATURES = [
     "mean radius",
     "mean texture",
@@ -38,31 +32,27 @@ KEY_FEATURES = [
 
 
 def load_data() -> pd.DataFrame:
-    df = pd.read_csv(DATA_PATH)
-    return df
+    return pd.read_csv(DATA_PATH)
 
 
 def print_overview(df: pd.DataFrame) -> None:
-    print("=" * 70)
     print("VISÃO GERAL DO DATASET")
-    print("=" * 70)
-    print(f"Shape: {df.shape}")
+    print(f"shape: {df.shape}")
     print()
-    print("Tipos de dados:")
+    print("tipos de dado:")
     print(df.dtypes.value_counts())
     print()
-    print("Valores ausentes por coluna (top 5, se houver):")
     na_counts = df.isna().sum().sort_values(ascending=False)
+    print("ausentes por coluna (top 5):")
     print(na_counts.head(5))
-    print(f"Total de valores ausentes: {df.isna().sum().sum()}")
+    print("total ausentes:", df.isna().sum().sum())
+    print("duplicatas:", df.duplicated().sum())
     print()
-    print("Duplicatas:", df.duplicated().sum())
-    print()
-    print("Distribuição da variável alvo (diagnosis):")
+    print("distribuição do diagnóstico:")
     print(df["diagnosis"].value_counts())
     print(df["diagnosis"].value_counts(normalize=True).round(3) * 100, "%")
     print()
-    print("Estatísticas descritivas (features 'mean'):")
+    print("estatísticas das features 'mean':")
     print(df[KEY_FEATURES].describe().T)
 
 
@@ -120,7 +110,7 @@ def plot_correlation_heatmap(df: pd.DataFrame) -> pd.Series:
     fig.savefig(FIG_DIR / "04_correlation_heatmap.png", dpi=150)
     plt.close(fig)
 
-    # Correlação de cada feature com o target (0=maligno, 1=benigno)
+    # quanto cada feature puxa pra malignidade/benignidade
     target_corr = corr["target"].drop(["target"]).sort_values()
     fig, ax = plt.subplots(figsize=(8, 10))
     target_corr.plot(kind="barh", ax=ax, color=["#C0546B" if v < 0 else "#4C9A8E" for v in target_corr])
@@ -135,14 +125,11 @@ def plot_correlation_heatmap(df: pd.DataFrame) -> pd.Series:
 
 def print_correlation_discussion(target_corr: pd.Series) -> None:
     print()
-    print("=" * 70)
-    print("CORRELAÇÃO COM O ALVO (target: 0=maligno, 1=benigno)")
-    print("=" * 70)
-    print("Features mais NEGATIVAMENTE correlacionadas com 'benigno'")
-    print("(ou seja, mais associadas a malignidade):")
+    print("correlação com o alvo (target: 0=maligno, 1=benigno)")
+    print("mais associadas a malignidade:")
     print(target_corr.head(8))
     print()
-    print("Features mais POSITIVAMENTE correlacionadas com 'benigno':")
+    print("mais associadas a benignidade:")
     print(target_corr.tail(8))
 
 
@@ -157,8 +144,7 @@ def main() -> None:
     target_corr = plot_correlation_heatmap(df)
     print_correlation_discussion(target_corr)
 
-    print()
-    print(f"Figuras salvas em: {FIG_DIR}")
+    print(f"\nfiguras salvas em: {FIG_DIR}")
 
 
 if __name__ == "__main__":

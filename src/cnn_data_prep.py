@@ -1,35 +1,27 @@
 """
-[EXTRA] Organiza o dataset CBIS-DDSM (baixado via kagglehub) na estrutura de
-pastas benign/malignant esperada por src/cnn_mammography.py.
+[EXTRA] Organiza o CBIS-DDSM (baixado via kagglehub) na estrutura de pastas
+benign/malignant que o cnn_mammography.py espera.
 
-O download do kagglehub vem em duas pastas:
-    <root>/csv/   -> metadados (mass_case_description_*.csv, calc_case_description_*.csv, dicom_info.csv)
-    <root>/jpeg/  -> imagens, uma pasta por SeriesInstanceUID
+O kagglehub baixa em duas pastas: csv/ (metadados) e jpeg/ (as imagens, uma
+pasta por SeriesInstanceUID). O problema é que os nomes de pasta em jpeg/ não
+batem com nada óbvio nos CSVs de descrição de caso — precisei ir em
+dicom_info.csv pra achar o de-para certo:
 
-Estratégia de mapeamento (validada inspecionando os CSVs reais do dataset):
-    1. Cada linha dos CSVs de descrição de caso ('mass_case_description_*' e
-       'calc_case_description_*') representa uma ANORMALIDADE (não a imagem
-       inteira) e traz a coluna 'pathology' (BENIGN / BENIGN_WITHOUT_CALLBACK
-       / MALIGNANT) e a coluna 'image file path', cujo primeiro componente
-       (ex.: 'Mass-Training_P_00001_LEFT_CC') identifica a mamografia
-       completa a que a anormalidade pertence.
-    2. Em 'dicom_info.csv', as linhas com SeriesDescription ==
-       'full mammogram images' têm essa mesma string em 'PatientName' e o
-       caminho real do JPEG em 'image_path' (formato
-       'CBIS-DDSM/jpeg/<SeriesInstanceUID>/<arquivo>.jpg').
-    3. Uma mesma mamografia pode ter mais de uma anormalidade (linhas) — o
-       rótulo final da imagem é 'malignant' se QUALQUER anormalidade nela for
-       maligna (abordagem conservadora), senão 'benign'.
-    4. Os CSVs de treino/teste já vêm pré-divididos por paciente (evita
-       vazamento de dados entre os conjuntos) — usamos essa divisão original
-       em vez de re-embaralhar.
+    - mass/calc_case_description_*.csv: cada linha é uma ANORMALIDADE (não a
+      imagem toda), com 'pathology' (BENIGN/BENIGN_WITHOUT_CALLBACK/MALIGNANT)
+      e 'image file path', cujo primeiro pedaço (tipo
+      'Mass-Training_P_00001_LEFT_CC') identifica a mamografia completa.
+    - dicom_info.csv: filtrando SeriesDescription == 'full mammogram images',
+      'PatientName' bate com esse mesmo identificador, e 'image_path' tem o
+      caminho real do jpeg.
+    - uma mamografia pode aparecer em mais de uma linha (várias anormalidades)
+      — se qualquer uma for maligna, considero a imagem toda maligna.
+    - os splits train/test dos CSVs originais já são por paciente, então uso
+      eles direto em vez de re-embaralhar (evita vazamento entre conjuntos).
 
-Uso:
-    python src/cnn_data_prep.py --cbis-root "C:\\Users\\pedro\\.cache\\kagglehub\\datasets\\awsaf49\\cbis-ddsm-breast-cancer-image-dataset\\versions\\1"
+python src/cnn_data_prep.py --cbis-root "C:\\Users\\pedro\\.cache\\kagglehub\\datasets\\awsaf49\\cbis-ddsm-breast-cancer-image-dataset\\versions\\1"
 
-Isso vai popular:
-    data/raw/cbis-ddsm/train/{benign,malignant}/*.jpg
-    data/raw/cbis-ddsm/test/{benign,malignant}/*.jpg
+Popula data/raw/cbis-ddsm/{train,test}/{benign,malignant}/*.jpg
 """
 
 import argparse
@@ -48,11 +40,10 @@ CASE_DESCRIPTION_FILES = {
 
 
 def load_full_mammogram_lookup(csv_dir: Path) -> pd.DataFrame:
-    """Retorna um DataFrame [image_id -> jpeg_relative_path] a partir de dicom_info.csv,
-    considerando apenas as imagens de mamografia completa (não recortes/ROI)."""
+    # de-para image_id -> caminho do jpeg, só pra mamografia completa (sem ROI/recorte)
     dicom_info = pd.read_csv(csv_dir / "dicom_info.csv")
     full = dicom_info[dicom_info["SeriesDescription"] == "full mammogram images"].copy()
-    # 'image_path' vem como 'CBIS-DDSM/jpeg/<uid>/<file>.jpg' -> mantemos só 'jpeg/<uid>/<file>.jpg'
+    # vem como 'CBIS-DDSM/jpeg/<uid>/<file>.jpg', só quero a parte depois de CBIS-DDSM/
     full["jpeg_relative_path"] = full["image_path"].str.replace(r"^CBIS-DDSM/", "", regex=True)
     lookup = full[["PatientName", "jpeg_relative_path"]].drop_duplicates(subset=["PatientName"])
     lookup = lookup.rename(columns={"PatientName": "image_id"})
