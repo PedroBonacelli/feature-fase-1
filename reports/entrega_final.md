@@ -116,18 +116,30 @@ Métricas no conjunto de **teste** (114 amostras nunca vistas no treino):
 |---|---|---|---|---|---|---|
 | **Regressão Logística** | 0,965 | 0,932 | **0,976** | **0,954** | 0,995 | **1** |
 | Árvore de Decisão | 0,939 | 0,907 | 0,929 | 0,918 | 0,929 | 3 |
-| Random Forest | 0,956 | **0,951** | 0,929 | 0,940 | **0,995** | 3 |
+| Random Forest | **0,974** | **1,000** | 0,929 | 0,963 | **0,996** | 3 |
 
 Validação cruzada repetida (10 folds × 3 repetições) confirma que
-`class_weight='balanced'` eleva o recall nos três modelos, enquanto a
-remoção das 8 features é neutra em desempenho (melhora a Árvore de Decisão;
-para os demais a variação fica dentro do desvio entre folds) — seu ganho é
-de interpretabilidade. Detalhamento na seção 6.1 do `RELATORIO_TECNICO.md`.
+`class_weight='balanced'` eleva o recall da Regressão Logística e da Árvore
+de Decisão de forma consistente (efeito marginal no Random Forest, dentro
+do ruído entre folds), enquanto a remoção das 8 features é neutra em
+desempenho (melhora a Árvore de Decisão; para os demais a variação fica
+dentro do desvio entre folds) — seu ganho é de interpretabilidade.
+Detalhamento na seção 6.1 do `RELATORIO_TECNICO.md`.
 
-A **Regressão Logística** obteve o melhor resultado — maior recall e F1 na
-classe maligno, e apenas 1 falso negativo. O Random Forest teve
-100% de acurácia no treino mas ficou atrás no recall, indício de leve
-overfitting.
+A **Regressão Logística** obteve o melhor resultado na métrica que mais
+importa clinicamente — maior recall e F1 na classe maligno, e apenas 1
+falso negativo. O Random Forest, nesta reexecução, alcançou a maior
+acurácia e precisão perfeita (zero falsos positivos), mas ficou atrás no
+recall (3 falsos negativos) — por isso a Logística segue sendo o modelo
+recomendado para triagem.
+
+*Nota: esta seção foi revalidada nesta revisão após a remoção de features
+redundantes e a adoção de `class_weight='balanced'`. Os números da
+Regressão Logística e da Árvore de Decisão reproduziram exatamente; os do
+Random Forest mudaram ligeiramente em relação a uma execução anterior
+(accuracy/precisão maiores, recall igual), efeito consistente com
+sensibilidade do `RandomForestClassifier` a versões do scikit-learn — ver
+detalhes na seção 6.1 do `RELATORIO_TECNICO.md`.*
 
 ![Matrizes de confusão dos três modelos no conjunto de teste](figures/06_confusion_matrices.png){width=100%}
 
