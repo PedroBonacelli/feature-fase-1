@@ -37,8 +37,9 @@ tech-challenge-fase1/
 │   ├── RELATORIO_TECNICO.md   # leia primeiro
 │   ├── 01_eda_findings.md
 │   ├── 02_model_evaluation.md
-│   ├── 03_cnn_extra.md
-│   └── model_comparison.csv
+│   ├── 03_cnn_extra.md         # [extra] visão computacional
+│   ├── model_comparison.csv
+│   └── cnn_model_comparison.csv
 ├── requirements.txt
 ├── Dockerfile
 └── README.md
@@ -63,8 +64,22 @@ python src/modeling.py        # treina os 3 modelos -> models/
 python src/evaluation.py      # avaliação + explicabilidade
 ```
 
-O script extra de CNN (`src/cnn_mammography.py`) precisa de TensorFlow e do
-CBIS-DDSM baixado à parte — ver `reports/03_cnn_extra.md`.
+### [Extra] Visão computacional
+
+Precisa do CBIS-DDSM baixado à parte (ver `data/raw/README.md`). Aponte
+`--cbis-root` pra raiz do download:
+
+```bash
+python src/cnn_data_prep.py --cbis-root ../cnn   # manifesto + correção de vazamento
+python src/cnn_cache.py                          # decodifica as imagens uma vez só
+python src/cnn_eda.py                            # EDA das imagens -> figuras 13-17
+python src/cnn_mammography.py --all              # treina as 4 combinações (~1h30 em CPU)
+python src/cnn_evaluate.py                       # avaliação + Grad-CAM -> figuras 18-21
+```
+
+`python src/cnn_mammography.py --all --quick` valida o pipeline inteiro em
+poucos minutos antes de disparar o treino completo. Discussão em
+`reports/03_cnn_extra.md`.
 
 ### Docker
 
@@ -80,13 +95,21 @@ Modelo recomendado: **Regressão Logística** — 97,6% de recall e AUC de
 0,995 na classe maligno, no teste (114 amostras). Comparação completa em
 `reports/model_comparison.csv`, discussão em `reports/RELATORIO_TECNICO.md`.
 
+### [Extra] CNN em mamografias
+
+Melhor modelo: **recorte da lesão + transfer learning (MobileNetV2)** —
+ROC AUC 0,707 no teste (644 imagens). Mas o achado principal é outro: o
+Grad-CAM mostrou que o segundo colocado na tabela de AUC acerta olhando
+pros marcadores de texto queimados na imagem, não pra lesão. Métrica sem
+explicabilidade engana. Ver `reports/03_cnn_extra.md`.
+
 ## Roteiro
 
 1. EDA — `src/eda.py`
 2. Pré-processamento — `src/preprocessing.py`
 3. Modelagem (3 algoritmos) — `src/modeling.py`
 4. Avaliação e explicabilidade — `src/evaluation.py`
-5. [Extra] CNN pra diagnóstico via imagem — código pronto, não executado (`reports/03_cnn_extra.md`)
+5. [Extra] CNN pra diagnóstico via imagem, com Grad-CAM — `src/cnn_*.py`, discussão em `reports/03_cnn_extra.md`
 6. Relatório técnico com discussão crítica — `reports/RELATORIO_TECNICO.md`
 
 ## Aviso

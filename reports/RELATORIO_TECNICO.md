@@ -209,13 +209,41 @@ faz sentido clinicamente.
 
 ## 7. [Extra] Visão computacional (CNN)
 
-Um pipeline de CNN pra diagnóstico via mamografia (dataset CBIS-DDSM),
-com Grad-CAM pra explicabilidade visual, está desenvolvido e documentado
-em `src/cnn_mammography.py` (mais `src/cnn_data_prep.py` pra organizar o
-dataset), mas não executado nesta entrega — o ambiente de desenvolvimento
-não tem acesso à internet pra baixar o dataset nem permite instalar
-TensorFlow. Justificativa e instruções de execução completas em
-`reports/03_cnn_extra.md`.
+Quatro modelos treinados e avaliados no CBIS-DDSM, em CPU: duas entradas
+(recorte da lesão × mamografia inteira) por duas arquiteturas (CNN de 4
+blocos treinada do zero × transfer learning com MobileNetV2).
+
+| modelo | ROC AUC | PR AUC | acurácia |
+|---|---|---|---|
+| **recorte + transfer** | **0,707** | **0,636** | 0,671 |
+| inteira + do zero | 0,677 | 0,612 | 0,617 |
+| recorte + do zero | 0,627 | 0,542 | 0,601 |
+| inteira + transfer | 0,593 | 0,490 | 0,557 |
+
+Dois vazamentos foram encontrados e corrigidos no caminho. Primeiro: os
+splits oficiais do CBIS-DDSM foram construídos de forma independente pra
+massas e pra calcificações, e por isso **31 pacientes aparecem em treino e
+em teste** ao mesmo tempo — realocados inteiramente pro treino. Segundo:
+como uma paciente tem em média 1,9 anormalidades e a mesma lesão aparece
+nas incidências CC e MLO, o split de validação precisa ser **agrupado por
+paciente**, senão imagens da mesma mama caem dos dois lados.
+
+O resultado mais importante desta etapa, porém, não está na tabela: **o
+Grad-CAM desqualificou o segundo colocado**. O modelo "inteira + do zero"
+acerta olhando pros marcadores de texto queimados na imagem (`RMLO`,
+`LCC`) e pro contorno da mama — quase nunca pro tecido interno. Uma sonda
+quantitativa confirma: uma regressão logística usando só estatísticas
+globais da imagem (brilho, contraste, área de tecido), sem localizar
+lesão nenhuma, já chega a AUC 0,572 nessa entrada. Só o "recorte +
+transfer" concentra o calor sobre a massa, com morfologia espiculada, e
+erra de forma clinicamente plausível.
+
+A conclusão prática é que **localizar a lesão é pré-requisito pra
+classificá-la** — a mesma arquitetura sobe de 0,627 pra 0,707 só por
+receber o recorte —, e que **métrica sem explicabilidade é perigosa em
+imagem médica**: pela tabela de AUC, o modelo que lê a etiqueta do exame
+entraria como segundo melhor. Detalhamento completo, discussão crítica e
+instruções de reprodução em `reports/03_cnn_extra.md`.
 
 ## 8. Discussão crítica: esse modelo pode ser usado na prática?
 

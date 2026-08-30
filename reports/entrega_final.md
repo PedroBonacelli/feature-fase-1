@@ -167,13 +167,48 @@ clinicamente plausível.
 
 # 7. [Extra] Visão Computacional (CNN)
 
-Um pipeline de CNN pra diagnóstico via mamografia (dataset CBIS-DDSM),
-incluindo Grad-CAM pra explicabilidade visual, foi desenvolvido e
-documentado (`src/cnn_mammography.py`, `src/cnn_data_prep.py`), mas não
-executado nesta entrega: o ambiente de desenvolvimento sandbox não tem
-acesso à internet pra baixar o dataset (dezenas de GB, requer
-autenticação Kaggle) nem permite instalar TensorFlow. Código, arquitetura
-e instruções completas de execução (Colab/local com GPU) documentados em
+Quatro modelos treinados e avaliados no CBIS-DDSM, em CPU (~56 min de
+treino): duas entradas (recorte da lesão × mamografia inteira) por duas
+arquiteturas (CNN de 4 blocos do zero × transfer learning com
+MobileNetV2).
+
+| modelo | ROC AUC | PR AUC | acurácia |
+|---|---|---|---|
+| **recorte + transfer** | **0,707** | **0,636** | 0,671 |
+| inteira + do zero | 0,677 | 0,612 | 0,617 |
+| recorte + do zero | 0,627 | 0,542 | 0,601 |
+| inteira + transfer | 0,593 | 0,490 | 0,557 |
+
+**Dois vazamentos corrigidos.** Os splits oficiais do CBIS-DDSM foram
+construídos de forma independente pra massas e pra calcificações, o que
+faz **31 pacientes aparecerem em treino e teste** ao mesmo tempo —
+realocados inteiramente pro treino. E como uma paciente tem em média 1,9
+anormalidades, com a mesma lesão nas incidências CC e MLO, o split de
+validação é **agrupado por paciente**.
+
+![Curvas ROC e Precisão-Recall dos quatro modelos no teste](figures/20_cnn_roc_pr.png){width=100%}
+
+**O Grad-CAM desqualificou o segundo colocado.** O modelo "inteira + do
+zero" acerta olhando pros marcadores de texto queimados na imagem
+(`RMLO`, `LCC`) e pro contorno da mama, quase nunca pro tecido interno.
+Uma sonda quantitativa confirma: regressão logística com apenas
+estatísticas globais da imagem — sem localizar lesão alguma — já atinge
+AUC 0,572 nessa entrada. Só o "recorte + transfer" concentra o calor
+sobre a massa espiculada e erra de forma clinicamente plausível.
+
+![Grad-CAM do melhor modelo (recorte + transfer): o calor cai sobre a massa espiculada, e mesmo os falsos positivos são erros clinicamente plausíveis](figures/21_cnn_gradcam_patch.png){width=82%}
+
+![Grad-CAM do segundo colocado (inteira + do zero): o calor cai sobre os marcadores de texto queimados na imagem e sobre o fundo — na linha "VN", em cima das próprias letras](figures/22_cnn_gradcam_full.png){width=82%}
+
+Duas lições: **localizar a lesão é pré-requisito pra classificá-la** (a
+mesma arquitetura sobe de 0,627 pra 0,707 só por receber o recorte) e
+**métrica sem explicabilidade é perigosa em imagem médica** — pela tabela
+de AUC, o modelo que lê a etiqueta do exame entraria como segundo melhor.
+
+Ajustado pra **recall ≥ 90%** na classe maligna, o melhor modelo entrega
+recall 0,911 com precisão 0,445: pra não perder 9 em cada 10 cânceres,
+mais da metade dos alarmes são falsos. AUC 0,707 é insuficiente pra uso
+clínico, mesmo como triagem. Discussão completa em
 `reports/03_cnn_extra.md`.
 
 \newpage

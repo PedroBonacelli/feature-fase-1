@@ -1,91 +1,102 @@
-"""
-[EXTRA] CNN pra diagnóstico via mamografia (CBIS-DDSM)
+# [EXTRA] CNN para diagnóstico via mamografia (CBIS-DDSM).
+#
+# Treina 4 combinações: 2 entradas x 2 arquiteturas.
+#
+#   entrada  patch    recorte da lesão (~330px no original) — a lesão ocupa a imagem
+#            full     mamografia inteira (~5236x3016) — a lesão é uma fração do quadro
+#
+#   arch     scratch  CNN de 4 blocos treinada do zero, 128x128 em escala de cinza
+#            transfer MobileNetV2 (ImageNet) a 160x160, em dois estágios
+#
+# Roda sobre o cache de arrays gerado por src/cnn_cache.py (sem isso, cada época
+# re-decodificaria JPEGs enormes e o treino em CPU viraria I/O puro).
+#
+# O split de validação é AGRUPADO POR PACIENTE. Uma paciente costuma ter várias
+# anormalidades e a mesma lesão aparece nas incidências CC e MLO; um split aleatório
+# colocaria imagens da mesma mama nos dois lados e inflaria a métrica de validação.
+#
+# python src/cnn_mammography.py --all
+# python src/cnn_mammography.py --variant patch --arch transfer
+# python src/cnn_mammography.py --all --quick     # valida o pipeline em poucos minutos
 
-Precisa de TensorFlow/Keras e do dataset já organizado (ver
-src/cnn_data_prep.py e data/raw/README.md). Escrito pra rodar num ambiente
-com GPU — não roda no sandbox usado no resto do projeto porque lá não dá
-pra baixar o dataset nem instalar tensorflow. Detalhes em
-reports/03_cnn_extra.md.
-
-Espera essa estrutura:
-    data/raw/cbis-ddsm/{train,test}/{benign,malignant}/*.png
-
-python src/cnn_mammography.py
-"""
-
+import argparse
+import json
+import time
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
-
-try:
-    import tensorflow as tf
-    from tensorflow.keras import layers, models
-    from sklearn.utils.class_weight import compute_class_weight
-    from sklearn.metrics import (
-        classification_report, confusion_matrix, roc_auc_score, roc_curve
-    )
-except ImportError as e:  # pragma: no cover
-    raise ImportError(
-        "Este script requer tensorflow e scikit-learn. Instale com:\n"
-        "    pip install tensorflow scikit-learn\n"
-        "Ele não foi executado no ambiente sandbox deste projeto — ver "
-        "reports/03_cnn_extra.md para detalhes."
-    ) from e
+import pandas as pd
+import tensorflow as tf
+from sklearn.model_selection import GroupShuffleSplit
+from sklearn.utils.class_weight import compute_class_weight
+from tensorflow.keras import layers, models
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data" / "raw" / "cbis-ddsm"
-TRAIN_DIR = DATA_DIR / "train"
-TEST_DIR = DATA_DIR / "test"
+CACHE_DIR = BASE_DIR / "data" / "processed" / "cnn_cache"
 MODELS_DIR = BASE_DIR / "models"
-FIG_DIR = BASE_DIR / "reports" / "figures"
+REPORTS_DIR = BASE_DIR / "reports"
 
-IMG_SIZE = (128, 128)     # tamanho reduzido para treinar rápido em CPU/GPU modesta
-BATCH_SIZE = 32
 SEED = 42
-EPOCHS = 30
-CLASS_NAMES = ["benign", "malignant"]  # ordem alfabética = ordem do Keras
+BATCH_SIZE = 32
+VAL_FRACTION = 0.15
+
+# cada arquitetura lê o cache no tamanho que ela espera
+ARCH_CONFIG = {
+    "scratch": {"size": 128, "channels": 1, "epochs": 40},
+    "transfer": {"size": 160, "channels": 3, "epochs_frozen": 12, "epochs_finetune": 8},
+}
 
 
-def load_datasets():
-    """Carrega os dados a partir da estrutura de pastas benign/malignant.
+# --------------------------------------------------------------------------- dados
 
-    Usa 15% do conjunto de treino como validação. Imagens em escala de
-    cinza (mamografias não têm informação de cor relevante).
-    """
-    train_ds = tf.keras.utils.image_dataset_from_directory(
-        TRAIN_DIR, validation_split=0.15, subset="training", seed=SEED,
-        image_size=IMG_SIZE, batch_size=BATCH_SIZE, color_mode="grayscale",
-        label_mode="binary",
-    )
-    val_ds = tf.keras.utils.image_dataset_from_directory(
-        TRAIN_DIR, validation_split=0.15, subset="validation", seed=SEED,
-        image_size=IMG_SIZE, batch_size=BATCH_SIZE, color_mode="grayscale",
-        label_mode="binary",
-    )
-    test_ds = tf.keras.utils.image_dataset_from_directory(
-        TEST_DIR, image_size=IMG_SIZE, batch_size=BATCH_SIZE,
-        color_mode="grayscale", label_mode="binary", shuffle=False,
-    )
+def load_split(variant: str, split: str, size: int):
+    imagens = np.load(CACHE_DIR / f"{variant}_{split}_{size}.npy")
+    rotulos = np.load(CACHE_DIR / f"{variant}_{split}_labels.npy").astype("float32")
+    grupos = np.load(CACHE_DIR / f"{variant}_{split}_groups.npy", allow_pickle=True)
+    return imagens, rotulos, grupos
 
-    # Normalização [0, 255] -> [0, 1]
-    normalize = layers.Rescaling(1.0 / 255)
-    train_ds = train_ds.map(lambda x, y: (normalize(x), y))
-    val_ds = val_ds.map(lambda x, y: (normalize(x), y))
-    test_ds = test_ds.map(lambda x, y: (normalize(x), y))
 
-    AUTOTUNE = tf.data.AUTOTUNE
-    train_ds = train_ds.cache().shuffle(1000).prefetch(AUTOTUNE)
-    val_ds = val_ds.cache().prefetch(AUTOTUNE)
-    test_ds = test_ds.cache().prefetch(AUTOTUNE)
+def split_por_paciente(imagens, rotulos, grupos):
+    # GroupShuffleSplit garante que nenhuma paciente apareça em treino e validação
+    splitter = GroupShuffleSplit(n_splits=1, test_size=VAL_FRACTION, random_state=SEED)
+    idx_treino, idx_val = next(splitter.split(imagens, rotulos, groups=grupos))
 
-    return train_ds, val_ds, test_ds
+    vazamento = set(grupos[idx_treino]) & set(grupos[idx_val])
+    assert not vazamento, f"vazamento treino/validação: {vazamento}"
 
+    print(f"  treino {len(idx_treino)} imagens / {len(set(grupos[idx_treino]))} pacientes")
+    print(f"  valid. {len(idx_val)} imagens / {len(set(grupos[idx_val]))} pacientes")
+    return idx_treino, idx_val
+
+
+def make_dataset(imagens, rotulos, channels: int, shuffle: bool):
+    ds = tf.data.Dataset.from_tensor_slices((imagens[..., None], rotulos[:, None]))
+    if shuffle:
+        ds = ds.shuffle(len(imagens), seed=SEED, reshuffle_each_iteration=True)
+    ds = ds.batch(BATCH_SIZE)
+    if channels == 3:
+        # mamografia é monocromática; a MobileNetV2 espera 3 canais, então replico.
+        # Feito no pipeline (e não numa camada Lambda) pra não complicar o save/load.
+        ds = ds.map(lambda x, y: (tf.repeat(x, 3, axis=-1), y),
+                    num_parallel_calls=tf.data.AUTOTUNE)
+    return ds.prefetch(tf.data.AUTOTUNE)
+
+
+def pesos_de_classe(rotulos) -> dict:
+    # CBIS-DDSM tem mais benignos que malignos; compensar evita que o modelo
+    # aprenda a chutar a classe majoritária
+    classes = np.unique(rotulos)
+    pesos = compute_class_weight("balanced", classes=classes, y=rotulos)
+    return dict(zip(classes.astype(int), pesos))
+
+
+# ------------------------------------------------------------------------ modelos
 
 def build_augmentation():
-    """Data augmentation leve — mamografias não devem ser espelhadas
-    verticalmente de forma agressiva nem giradas demais, para preservar
-    a anatomia; usamos apenas flip horizontal, pequenas rotações e zoom."""
+    # Augmentation leve: mamografia não deve ser espelhada verticalmente nem girada
+    # demais, senão a anatomia deixa de fazer sentido. Só flip horizontal (equivale a
+    # trocar mama esquerda/direita), rotações e zoom pequenos, e leve variação de
+    # contraste (imita diferença de equipamento/protocolo).
     return models.Sequential([
         layers.RandomFlip("horizontal"),
         layers.RandomRotation(0.05),
@@ -94,19 +105,16 @@ def build_augmentation():
     ], name="augmentation")
 
 
-def build_cnn(input_shape=(128, 128, 1)) -> tf.keras.Model:
-    """CNN convolucional simples (treinada do zero) para classificação
-    binária benigno/maligno a partir de recortes (patches) de mamografia.
-
-    Arquitetura: 4 blocos conv-batchnorm-pool com número crescente de
-    filtros, seguidos de GlobalAveragePooling (reduz overfitting em
-    relação a Flatten + Dense grande) e uma cabeça densa com dropout.
-    """
+def build_scratch(input_shape=(128, 128, 1)) -> tf.keras.Model:
+    # 4 blocos conv-batchnorm-pool com filtros crescentes, GlobalAveragePooling
+    # (menos parâmetros e menos overfitting que Flatten + Dense grande) e cabeça
+    # densa com dropout.
     inputs = tf.keras.Input(shape=input_shape)
     x = build_augmentation()(inputs)
+    x = layers.Rescaling(1.0 / 255)(x)
 
-    for filters in (32, 64, 128, 256):
-        x = layers.Conv2D(filters, 3, padding="same", activation="relu")(x)
+    for filtros in (32, 64, 128, 256):
+        x = layers.Conv2D(filtros, 3, padding="same", activation="relu")(x)
         x = layers.BatchNormalization()(x)
         x = layers.MaxPooling2D()(x)
 
@@ -114,140 +122,180 @@ def build_cnn(input_shape=(128, 128, 1)) -> tf.keras.Model:
     x = layers.Dense(128, activation="relu")(x)
     x = layers.Dropout(0.4)(x)
     outputs = layers.Dense(1, activation="sigmoid")(x)
+    return tf.keras.Model(inputs, outputs, name="cnn_scratch")
 
-    model = tf.keras.Model(inputs, outputs, name="cnn_mammography")
+
+def build_transfer(input_shape=(160, 160, 3)):
+    inputs = tf.keras.Input(shape=input_shape)
+    x = build_augmentation()(inputs)
+    # preprocessamento da MobileNetV2: [0,255] -> [-1,1]. Dentro do modelo, para
+    # que treino e inferência usem exatamente a mesma escala.
+    x = layers.Rescaling(1.0 / 127.5, offset=-1.0)(x)
+
+    backbone = tf.keras.applications.MobileNetV2(
+        input_shape=input_shape, include_top=False, weights="imagenet")
+    backbone.trainable = False
+
+    x = backbone(x, training=False)
+    x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Dropout(0.3)(x)
+    outputs = layers.Dense(1, activation="sigmoid")(x)
+    return tf.keras.Model(inputs, outputs, name="cnn_transfer"), backbone
+
+
+def compilar(model, lr: float) -> None:
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
         loss="binary_crossentropy",
-        metrics=["accuracy", tf.keras.metrics.AUC(name="auc"),
+        metrics=["accuracy",
+                 tf.keras.metrics.AUC(name="auc"),
                  tf.keras.metrics.Recall(name="recall")],
     )
-    return model
 
 
-def compute_class_weights(train_ds) -> dict:
-    """Calcula pesos de classe para compensar eventual desbalanceamento
-    (o CBIS-DDSM costuma ter mais casos benignos que malignos)."""
-    labels = np.concatenate([y.numpy() for _, y in train_ds]).flatten()
-    classes = np.unique(labels)
-    weights = compute_class_weight(class_weight="balanced", classes=classes, y=labels)
-    return dict(zip(classes.astype(int), weights))
+# ------------------------------------------------------------------------- treino
 
-
-def train(model, train_ds, val_ds, class_weight):
-    callbacks = [
-        tf.keras.callbacks.EarlyStopping(
-            monitor="val_auc", mode="max", patience=6, restore_best_weights=True
-        ),
-        tf.keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss", factor=0.5, patience=3
-        ),
-        tf.keras.callbacks.ModelCheckpoint(
-            str(MODELS_DIR / "cnn_mammography.keras"),
-            monitor="val_auc", mode="max", save_best_only=True,
-        ),
+def callbacks_padrao(checkpoint: Path, patience: int):
+    # monitora val_auc (e não accuracy): com classe desbalanceada, accuracy engana
+    return [
+        tf.keras.callbacks.EarlyStopping(monitor="val_auc", mode="max",
+                                         patience=patience, restore_best_weights=True),
+        tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=3,
+                                             min_lr=1e-7),
+        tf.keras.callbacks.ModelCheckpoint(str(checkpoint), monitor="val_auc",
+                                           mode="max", save_best_only=True),
     ]
-    history = model.fit(
-        train_ds, validation_data=val_ds, epochs=EPOCHS,
-        class_weight=class_weight, callbacks=callbacks,
-    )
-    return history
 
 
-def plot_training_curves(history) -> None:
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
-    for ax, metric in zip(axes, ["loss", "accuracy", "auc"]):
-        ax.plot(history.history[metric], label="treino")
-        ax.plot(history.history[f"val_{metric}"], label="validação")
-        ax.set_title(metric)
-        ax.set_xlabel("época")
-        ax.legend()
-    fig.tight_layout()
-    fig.savefig(FIG_DIR / "10_cnn_training_curves.png", dpi=150)
-    plt.close(fig)
+def historico_para_df(historicos: list) -> pd.DataFrame:
+    # o Keras renomeia métricas repetidas ('auc', 'auc_1', ...) quando mais de um
+    # modelo é construído no mesmo processo; normaliza os nomes antes de salvar
+    frames = []
+    for estagio, hist in historicos:
+        df = pd.DataFrame(hist.history)
+        df.columns = [_normaliza_metrica(c) for c in df.columns]
+        df.insert(0, "epoca", range(1, len(df) + 1))
+        df.insert(0, "estagio", estagio)
+        frames.append(df)
+    return pd.concat(frames, ignore_index=True)
 
 
-def evaluate(model, test_ds) -> None:
-    y_true = np.concatenate([y.numpy() for _, y in test_ds]).flatten()
-    y_proba = model.predict(test_ds).flatten()
-    y_pred = (y_proba >= 0.5).astype(int)
-
-    print(classification_report(y_true, y_pred, target_names=CLASS_NAMES))
-    auc = roc_auc_score(y_true, y_proba)
-    print(f"ROC AUC: {auc:.4f}")
-
-    cm = confusion_matrix(y_true, y_pred)
-    fig, ax = plt.subplots(figsize=(5, 4))
-    ax.imshow(cm, cmap="Blues")
-    for (i, j), v in np.ndenumerate(cm):
-        ax.text(j, i, str(v), ha="center", va="center")
-    ax.set_xticks([0, 1], CLASS_NAMES)
-    ax.set_yticks([0, 1], CLASS_NAMES)
-    ax.set_xlabel("Predito")
-    ax.set_ylabel("Real")
-    ax.set_title("Matriz de confusão — CNN mamografia")
-    fig.tight_layout()
-    fig.savefig(FIG_DIR / "11_cnn_confusion_matrix.png", dpi=150)
-    plt.close(fig)
-
-    fpr, tpr, _ = roc_curve(y_true, y_proba)
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ax.plot(fpr, tpr, label=f"CNN (AUC={auc:.3f})")
-    ax.plot([0, 1], [0, 1], "k--", alpha=0.4)
-    ax.set_xlabel("Taxa de falso positivo")
-    ax.set_ylabel("Taxa de verdadeiro positivo")
-    ax.set_title("Curva ROC — CNN mamografia")
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(FIG_DIR / "12_cnn_roc.png", dpi=150)
-    plt.close(fig)
+def _normaliza_metrica(nome: str) -> str:
+    for base in ("auc", "recall"):
+        if nome == base or nome.startswith(f"{base}_"):
+            return base
+        if nome == f"val_{base}" or nome.startswith(f"val_{base}_"):
+            return f"val_{base}"
+    return nome
 
 
-def grad_cam(model, img_array, last_conv_layer_name="conv2d_3"):
-    """Grad-CAM: gera um mapa de calor mostrando quais regiões da mamografia
-    mais influenciaram a predição — o equivalente, em imagem, ao papel que o
-    SHAP cumpre para os dados estruturados (etapa 6). Essencial para que o
-    radiologista possa auditar visualmente onde o modelo 'olhou'."""
-    grad_model = tf.keras.Model(
-        model.inputs, [model.get_layer(last_conv_layer_name).output, model.output]
-    )
-    with tf.GradientTape() as tape:
-        conv_outputs, predictions = grad_model(img_array)
-        loss = predictions[:, 0]
+def treinar(variant: str, arch: str, quick: bool) -> dict:
+    cfg = ARCH_CONFIG[arch]
+    size, channels = cfg["size"], cfg["channels"]
+    nome = f"{variant}_{arch}"
+    print(f"\n{'=' * 70}\n{nome}  (entrada={variant}, arquitetura={arch}, {size}px)\n{'=' * 70}")
 
-    grads = tape.gradient(loss, conv_outputs)
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    conv_outputs = conv_outputs[0]
-    heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(heatmap)
-    heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)
-    return heatmap.numpy()
+    imagens, rotulos, grupos = load_split(variant, "train", size)
+    idx_treino, idx_val = split_por_paciente(imagens, rotulos, grupos)
+
+    if quick:
+        # só para validar o pipeline: subamostra e poucas épocas
+        idx_treino = idx_treino[:256]
+        idx_val = idx_val[:128]
+        print("  [quick] subamostrando para 256 treino / 128 validação")
+
+    train_ds = make_dataset(imagens[idx_treino], rotulos[idx_treino], channels, shuffle=True)
+    val_ds = make_dataset(imagens[idx_val], rotulos[idx_val], channels, shuffle=False)
+
+    pesos = pesos_de_classe(rotulos[idx_treino])
+    print(f"  pesos de classe: {({k: round(v, 3) for k, v in pesos.items()})}")
+
+    checkpoint = MODELS_DIR / f"cnn_{nome}.keras"
+    inicio = time.time()
+    historicos = []
+
+    if arch == "scratch":
+        model = build_scratch((size, size, 1))
+        compilar(model, lr=1e-4)
+        print(f"  parâmetros treináveis: {model.count_params():,}")
+        epocas = 2 if quick else cfg["epochs"]
+        h = model.fit(train_ds, validation_data=val_ds, epochs=epocas,
+                      class_weight=pesos, verbose=2, callbacks=callbacks_padrao(checkpoint, 8))
+        historicos.append(("scratch", h))
+    else:
+        model, backbone = build_transfer((size, size, 3))
+        # Estágio 1 — backbone congelado, treina só a cabeça densa. Barato e evita
+        # que gradientes grandes de uma cabeça aleatória destruam os pesos ImageNet.
+        compilar(model, lr=1e-3)
+        print(f"  [estágio 1] backbone congelado — {model.count_params():,} params "
+              f"({sum(np.prod(w.shape) for w in model.trainable_weights):,.0f} treináveis)")
+        epocas = 2 if quick else cfg["epochs_frozen"]
+        h1 = model.fit(train_ds, validation_data=val_ds, epochs=epocas,
+                       class_weight=pesos, verbose=2, callbacks=callbacks_padrao(checkpoint, 5))
+        historicos.append(("congelado", h1))
+
+        # Estágio 2 — descongela o último bloco convolucional com learning rate baixo.
+        # Fine-tune completo seria inviável em CPU (medido: ~7,7 s/batch).
+        backbone.trainable = True  # libera tudo, e então congela o que não deve treinar
+        for layer in backbone.layers[:-24]:
+            layer.trainable = False
+        for layer in backbone.layers[-24:]:
+            # BatchNorm fica congelada mesmo no bloco liberado: com batch pequeno,
+            # atualizar as estatísticas de um backbone pré-treinado costuma piorar
+            if isinstance(layer, layers.BatchNormalization):
+                layer.trainable = False
+
+        compilar(model, lr=1e-5)
+        print(f"  [estágio 2] fine-tune do último bloco — "
+              f"{sum(np.prod(w.shape) for w in model.trainable_weights):,.0f} params treináveis")
+        epocas = 1 if quick else cfg["epochs_finetune"]
+        h2 = model.fit(train_ds, validation_data=val_ds, epochs=epocas,
+                       class_weight=pesos, verbose=2, callbacks=callbacks_padrao(checkpoint, 4))
+        historicos.append(("fine-tune", h2))
+
+    duracao = time.time() - inicio
+    hist_df = historico_para_df(historicos)
+    hist_df.to_csv(REPORTS_DIR / f"cnn_history_{nome}.csv", index=False)
+
+    melhor_auc = float(hist_df["val_auc"].max())
+    print(f"  concluído em {duracao / 60:.1f} min — melhor val_auc: {melhor_auc:.4f}")
+    print(f"  modelo salvo em {checkpoint}")
+
+    return {"modelo": nome, "variant": variant, "arch": arch,
+            "epocas": int(len(hist_df)), "minutos": round(duracao / 60, 1),
+            "melhor_val_auc": round(melhor_auc, 4)}
 
 
 def main() -> None:
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    FIG_DIR.mkdir(parents=True, exist_ok=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--variant", choices=["patch", "full"], default="patch")
+    parser.add_argument("--arch", choices=["scratch", "transfer"], default="scratch")
+    parser.add_argument("--all", action="store_true",
+                        help="roda as 4 combinações de entrada x arquitetura")
+    parser.add_argument("--quick", action="store_true",
+                        help="subamostra e poucas épocas, só para validar o pipeline")
+    args = parser.parse_args()
 
-    if not TRAIN_DIR.exists():
+    if not CACHE_DIR.exists():
         raise FileNotFoundError(
-            f"Dataset não encontrado em {TRAIN_DIR}. Baixe e organize o "
-            f"CBIS-DDSM conforme instruções em data/raw/README.md antes de "
-            f"rodar este script."
-        )
+            f"Cache não encontrado em {CACHE_DIR}. Rode antes:\n"
+            f"    python src/cnn_data_prep.py\n    python src/cnn_cache.py")
 
-    train_ds, val_ds, test_ds = load_datasets()
-    class_weight = compute_class_weights(train_ds)
-    print(f"Pesos de classe (compensando desbalanceamento): {class_weight}")
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    tf.keras.utils.set_random_seed(SEED)
 
-    model = build_cnn(input_shape=IMG_SIZE + (1,))
-    model.summary()
+    combinacoes = ([(v, a) for v in ("patch", "full") for a in ("scratch", "transfer")]
+                   if args.all else [(args.variant, args.arch)])
 
-    history = train(model, train_ds, val_ds, class_weight)
-    plot_training_curves(history)
-    evaluate(model, test_ds)
+    resumo = [treinar(variant, arch, args.quick) for variant, arch in combinacoes]
 
-    print(f"\nModelo salvo em: {MODELS_DIR / 'cnn_mammography.keras'}")
-    print(f"Figuras salvas em: {FIG_DIR}")
+    print(f"\n{'=' * 70}\nRESUMO DO TREINO\n{'=' * 70}")
+    print(pd.DataFrame(resumo).to_string(index=False))
+    if not args.quick:
+        (REPORTS_DIR / "cnn_training_summary.json").write_text(
+            json.dumps(resumo, indent=2), encoding="utf-8")
+    print("\nPróximo passo: python src/cnn_evaluate.py")
 
 
 if __name__ == "__main__":
