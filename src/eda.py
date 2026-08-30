@@ -102,8 +102,11 @@ def plot_correlation_heatmap(df: pd.DataFrame) -> pd.Series:
     numeric_df = df.drop(columns=["diagnosis"])
     corr = numeric_df.corr()
 
-    fig, ax = plt.subplots(figsize=(16, 13))
+    # anotação em cada célula: com 31 features a fonte precisa ser bem pequena,
+    # então a figura cresce junto pra manter os números legíveis no PNG
+    fig, ax = plt.subplots(figsize=(24, 20))
     sns.heatmap(corr, cmap="RdBu_r", center=0, square=True, linewidths=0.3,
+                annot=True, fmt=".2f", annot_kws={"size": 5.5},
                 cbar_kws={"shrink": 0.7}, ax=ax)
     ax.set_title("Matriz de correlação entre as features")
     fig.tight_layout()
